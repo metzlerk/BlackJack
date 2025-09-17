@@ -56,8 +56,10 @@ class Hand:
         self.bet = 0
         self.is_doubled = False
         self.is_split = False
+        self.is_surrendered = False
         self.is_busted = False
         self.is_blackjack = False
+        self.is_split_hand = False  # Indicates this is a hand created from splitting
     
     def add_card(self, card: Card):
         self.cards.append(card)
@@ -94,7 +96,8 @@ class Hand:
         return total + aces + 10 <= 21
     
     def _check_blackjack(self):
-        if len(self.cards) == 2 and self.get_value() == 21:
+        # Blackjack only counts on original 2-card hands, not split hands
+        if len(self.cards) == 2 and self.get_value() == 21 and not self.is_split_hand:
             self.is_blackjack = True
     
     def _check_bust(self):
@@ -102,10 +105,15 @@ class Hand:
             self.is_busted = True
     
     def can_split(self) -> bool:
-        return len(self.cards) == 2 and self.cards[0].value == self.cards[1].value
+        return (len(self.cards) == 2 and 
+                self.cards[0].rank == self.cards[1].rank and 
+                not self.is_split)
     
     def can_double(self) -> bool:
         return len(self.cards) == 2 and not self.is_doubled
+    
+    def can_surrender(self) -> bool:
+        return len(self.cards) == 2 and not self.is_doubled and not self.is_split_hand
     
     def get_display(self, hide_first: bool = False) -> str:
         if hide_first and len(self.cards) > 0:
@@ -115,14 +123,17 @@ class Hand:
             cards_str = " ".join(str(card) for card in self.cards)
             value = self.get_value()
             status = ""
-            if self.is_blackjack:
+            if self.is_surrendered:
+                status = " (SURRENDERED)"
+            elif self.is_blackjack:
                 status = " (BLACKJACK!)"
             elif self.is_busted:
                 status = " (BUST!)"
             elif self.is_soft() and value <= 21:
                 status = " (Soft)"
             
-            return f"{cards_str} = {value}{status}"
+            bet_info = f" [Bet: ${self.bet}]" if self.bet > 0 else ""
+            return f"{cards_str} = {value}{status}{bet_info}"
 
 # Dealer Class
 class Dealer:
@@ -155,10 +166,25 @@ class PlayerState:
     bank: int = 1000
     hands: List[Hand] = None
     current_bet: int = 0
+    current_hand_index: int = 0
     
     def __post_init__(self):
         if self.hands is None:
             self.hands = [Hand()]
+    
+    def get_current_hand(self) -> Hand:
+        return self.hands[self.current_hand_index]
+    
+    def has_more_hands(self) -> bool:
+        return self.current_hand_index < len(self.hands) - 1
+    
+    def next_hand(self):
+        if self.has_more_hands():
+            self.current_hand_index += 1
+    
+    def reset_hands(self):
+        self.hands = [Hand()]
+        self.current_hand_index = 0
 
 # AI Bot with Learning
 class BlackjackBot:
@@ -195,13 +221,17 @@ class BlackjackBot:
         """Choose action using epsilon-greedy strategy"""
         state_key = self.get_state_key(hand, dealer_upcard)
         
+        # Get available actions
+        actions = ['hit', 'stand']
+        if hand.can_double() and self.bank >= hand.bet:
+            actions.append('double')
+        if hand.can_split() and self.bank >= hand.bet:
+            actions.append('split')
+        if hand.can_surrender():
+            actions.append('surrender')
+        
         # Epsilon-greedy exploration
         if random.random() < self.epsilon:
-            actions = ['hit', 'stand']
-            if hand.can_double():
-                actions.append('double')
-            if hand.can_split():
-                actions.append('split')
             return random.choice(actions)
         
         # Choose best known action
@@ -209,7 +239,12 @@ class BlackjackBot:
         if not q_values:
             return 'stand'  # Default action
         
-        return max(q_values.items(), key=lambda x: x[1])[0]
+        # Only consider available actions
+        available_q_values = {action: q_values[action] for action in actions if action in q_values}
+        if not available_q_values:
+            return random.choice(actions)
+        
+        return max(available_q_values.items(), key=lambda x: x[1])[0]
     
     def update_q_value(self, state_key: str, action: str, reward: float, next_state_key: str = None):
         """Update Q-value using Q-learning"""
@@ -324,9 +359,12 @@ class GameState:
         self.dealer = Dealer(self.deck)
         self.player = PlayerState()
         self.bot = BlackjackBot()
+        self.bot_hand = Hand()  # Bot gets its own hand from the start
         self.game_phase = "betting"  # betting, playing, dealer, results
         self.message = "Place your bets!"
         self.bot_states_actions = []  # For learning
+        self.bot_last_action = ""  # Track bot's current move
+        self.bot_is_thinking = False
     
     def reset_banks(self):
         self.player.bank = 1000
@@ -337,13 +375,20 @@ class GameState:
 game_state = GameState()
 
 # Game Logic Functions
+import time
+import asyncio
+from threading import Timer
+
 def start_new_game():
     """Start a new round of blackjack"""
     game_state.dealer.new_hand()
-    game_state.player.hands = [Hand()]
+    game_state.player.reset_hands()
+    game_state.bot_hand = Hand()
     game_state.game_phase = "betting"
     game_state.message = "Place your bets!"
     game_state.bot_states_actions = []
+    game_state.bot_last_action = ""
+    game_state.bot_is_thinking = False
     
     return update_display()
 
@@ -361,17 +406,26 @@ def place_bet(bet_amount: int):
         return update_display()
     
     # Place bets
-    game_state.player.hands[0].bet = bet_amount
+    game_state.player.get_current_hand().bet = bet_amount
     game_state.player.bank -= bet_amount
+    game_state.bot_hand.bet = bet_amount
     game_state.bot.bank -= bet_amount
     
-    # Deal initial cards
-    for _ in range(2):
-        game_state.player.hands[0].add_card(game_state.deck.deal_card())
-        game_state.dealer.hand.add_card(game_state.deck.deal_card())
+    # Deal initial cards (2 to each player, 2 to dealer)
+    game_state.message = "Dealing cards..."
+    
+    # First card to each player
+    game_state.player.get_current_hand().add_card(game_state.deck.deal_card())
+    game_state.bot_hand.add_card(game_state.deck.deal_card())
+    game_state.dealer.hand.add_card(game_state.deck.deal_card())
+    
+    # Second card to each player  
+    game_state.player.get_current_hand().add_card(game_state.deck.deal_card())
+    game_state.bot_hand.add_card(game_state.deck.deal_card())
+    game_state.dealer.hand.add_card(game_state.deck.deal_card())
     
     game_state.game_phase = "playing"
-    game_state.message = f"Bet placed: ${bet_amount}. Make your move!"
+    game_state.message = f"Cards dealt! Make your move! (Bet: ${bet_amount})"
     
     return update_display()
 
@@ -380,14 +434,14 @@ def player_hit():
     if game_state.game_phase != "playing":
         return update_display()
     
-    hand = game_state.player.hands[0]
-    hand.add_card(game_state.deck.deal_card())
+    current_hand = game_state.player.get_current_hand()
+    current_hand.add_card(game_state.deck.deal_card())
     
-    if hand.is_busted:
-        game_state.message = "Player busted! Bot's turn."
-        bot_play()
+    if current_hand.is_busted:
+        game_state.message = f"Hand {game_state.player.current_hand_index + 1} busted!"
+        return handle_next_player_hand()
     else:
-        game_state.message = "Card dealt! Hit or Stand?"
+        game_state.message = f"Card dealt to hand {game_state.player.current_hand_index + 1}! Choose your next move."
     
     return update_display()
 
@@ -396,65 +450,190 @@ def player_stand():
     if game_state.game_phase != "playing":
         return update_display()
     
-    game_state.message = "Player stands! Bot's turn."
-    bot_play()
+    game_state.message = f"Hand {game_state.player.current_hand_index + 1} stands!"
+    return handle_next_player_hand()
+
+def player_double():
+    """Player chooses to double down"""
+    if game_state.game_phase != "playing":
+        return update_display()
+    
+    current_hand = game_state.player.get_current_hand()
+    
+    if not current_hand.can_double():
+        game_state.message = "Cannot double down!"
+        return update_display()
+    
+    if current_hand.bet > game_state.player.bank:
+        game_state.message = "Insufficient funds to double down!"
+        return update_display()
+    
+    # Double the bet
+    game_state.player.bank -= current_hand.bet
+    current_hand.bet *= 2
+    current_hand.is_doubled = True
+    
+    # Deal one more card
+    current_hand.add_card(game_state.deck.deal_card())
+    
+    if current_hand.is_busted:
+        game_state.message = f"Hand {game_state.player.current_hand_index + 1} doubled and busted!"
+    else:
+        game_state.message = f"Hand {game_state.player.current_hand_index + 1} doubled down!"
+    
+    return handle_next_player_hand()
+
+def player_split():
+    """Player chooses to split"""
+    if game_state.game_phase != "playing":
+        return update_display()
+    
+    current_hand = game_state.player.get_current_hand()
+    
+    if not current_hand.can_split():
+        game_state.message = "Cannot split!"
+        return update_display()
+    
+    if current_hand.bet > game_state.player.bank:
+        game_state.message = "Insufficient funds to split!"
+        return update_display()
+    
+    # Create new hand from split
+    new_hand = Hand()
+    new_hand.bet = current_hand.bet
+    new_hand.is_split_hand = True
+    current_hand.is_split_hand = True
+    
+    # Move second card to new hand
+    new_hand.add_card(current_hand.cards.pop())
+    
+    # Deal new cards to both hands
+    current_hand.add_card(game_state.deck.deal_card())
+    new_hand.add_card(game_state.deck.deal_card())
+    
+    # Add new hand to player
+    game_state.player.hands.insert(game_state.player.current_hand_index + 1, new_hand)
+    game_state.player.bank -= current_hand.bet
+    
+    current_hand.is_split = True
+    game_state.message = f"Hand split! Playing hand {game_state.player.current_hand_index + 1} of {len(game_state.player.hands)}."
     
     return update_display()
 
+def player_surrender():
+    """Player chooses to surrender"""
+    if game_state.game_phase != "playing":
+        return update_display()
+    
+    current_hand = game_state.player.get_current_hand()
+    
+    if not current_hand.can_surrender():
+        game_state.message = "Cannot surrender!"
+        return update_display()
+    
+    current_hand.is_surrendered = True
+    game_state.player.bank += current_hand.bet // 2  # Get half bet back
+    
+    game_state.message = f"Hand {game_state.player.current_hand_index + 1} surrendered!"
+    return handle_next_player_hand()
+
+def handle_next_player_hand():
+    """Handle moving to next hand or finishing player turn"""
+    if game_state.player.has_more_hands():
+        game_state.player.next_hand()
+        game_state.message = f"Playing hand {game_state.player.current_hand_index + 1} of {len(game_state.player.hands)}."
+        return update_display()
+    else:
+        # Player finished, now bot plays
+        game_state.message = "Your turn finished! Bot is thinking..."
+        game_state.bot_is_thinking = True
+        # Use a timer to simulate thinking time
+        Timer(1.0, bot_play).start()
+        return update_display()
+
 def bot_play():
-    """Bot plays its hand"""
-    bot_hand = Hand()
-    bot_hand.bet = game_state.player.hands[0].bet
-    
-    # Deal bot's initial cards
-    for _ in range(2):
-        bot_hand.add_card(game_state.deck.deal_card())
-    
+    """Bot plays its hand with visible moves"""
+    game_state.bot_is_thinking = False
     states_actions = []
     
     # Bot plays using its strategy
-    while not bot_hand.is_busted and not bot_hand.is_blackjack:
-        state_key = game_state.bot.get_state_key(bot_hand, game_state.dealer.hand.cards[0])
-        action = game_state.bot.get_action(bot_hand, game_state.dealer.hand.cards[0])
+    while (not game_state.bot_hand.is_busted and 
+           not game_state.bot_hand.is_blackjack and 
+           not game_state.bot_hand.is_surrendered):
+        
+        state_key = game_state.bot.get_state_key(game_state.bot_hand, game_state.dealer.hand.cards[0])
+        action = game_state.bot.get_action(game_state.bot_hand, game_state.dealer.hand.cards[0])
         
         states_actions.append((state_key, action))
+        game_state.bot_last_action = action.upper()
         
         if action == "hit":
-            bot_hand.add_card(game_state.deck.deal_card())
+            game_state.bot_hand.add_card(game_state.deck.deal_card())
+            game_state.message = f"Bot chose to HIT and drew {game_state.bot_hand.cards[-1]}"
         elif action == "stand":
+            game_state.message = "Bot chose to STAND"
             break
-        elif action == "double" and bot_hand.can_double():
-            bot_hand.add_card(game_state.deck.deal_card())
-            bot_hand.is_doubled = True
-            game_state.bot.bank -= bot_hand.bet
-            bot_hand.bet *= 2
+        elif action == "double" and game_state.bot_hand.can_double() and game_state.bot.bank >= game_state.bot_hand.bet:
+            game_state.bot.bank -= game_state.bot_hand.bet
+            game_state.bot_hand.bet *= 2
+            game_state.bot_hand.is_doubled = True
+            game_state.bot_hand.add_card(game_state.deck.deal_card())
+            game_state.message = f"Bot chose to DOUBLE DOWN and drew {game_state.bot_hand.cards[-1]}"
             break
+        elif action == "surrender" and game_state.bot_hand.can_surrender():
+            game_state.bot_hand.is_surrendered = True
+            game_state.bot.bank += game_state.bot_hand.bet // 2
+            game_state.message = "Bot chose to SURRENDER"
+            break
+        else:
+            # Fallback to stand if action not available
+            game_state.message = "Bot chose to STAND"
+            break
+        
+        # Add delay between bot actions
+        time.sleep(1)
     
     game_state.bot_states_actions = states_actions
     
-    # Store bot hand for results
-    game_state.bot_hand = bot_hand
+    # Add delay before dealer plays
+    Timer(2.0, dealer_play).start()
+
+def dealer_play():
+    """Dealer plays their hand"""
+    game_state.message = "Dealer reveals cards and plays..."
     
-    # Now dealer plays
-    game_state.dealer.play_hand()
+    # Dealer plays according to rules
+    while game_state.dealer.should_hit():
+        card = game_state.deck.deal_card()
+        game_state.dealer.hand.add_card(card)
+        game_state.message = f"Dealer draws {card} (Total: {game_state.dealer.hand.get_value()})"
+        time.sleep(1)
     
-    # Calculate results
-    calculate_results()
+    if game_state.dealer.hand.is_busted:
+        game_state.message = "Dealer busted!"
+    else:
+        game_state.message = f"Dealer stands with {game_state.dealer.hand.get_value()}"
+    
+    # Calculate results after a short delay
+    Timer(1.0, calculate_results).start()
 
 def calculate_results():
     """Calculate and display game results"""
     dealer_value = game_state.dealer.hand.get_value()
-    player_hand = game_state.player.hands[0]
-    bot_hand = game_state.bot_hand
+    total_player_winnings = 0
     
-    # Calculate player results
-    player_result = get_hand_result(player_hand, dealer_value)
-    player_winnings = calculate_winnings(player_hand, player_result)
-    game_state.player.bank += player_winnings
+    # Calculate results for each player hand
+    player_results = []
+    for i, hand in enumerate(game_state.player.hands):
+        result = get_hand_result(hand, dealer_value)
+        winnings = calculate_winnings(hand, result)
+        game_state.player.bank += winnings
+        total_player_winnings += winnings - hand.bet  # Net winnings
+        player_results.append(f"Hand {i+1}: {result} (${winnings - hand.bet:+})")
     
     # Calculate bot results
-    bot_result = get_hand_result(bot_hand, dealer_value)
-    bot_winnings = calculate_winnings(bot_hand, bot_result)
+    bot_result = get_hand_result(game_state.bot_hand, dealer_value)
+    bot_winnings = calculate_winnings(game_state.bot_hand, bot_result)
     game_state.bot.bank += bot_winnings
     
     # Update bot learning
@@ -472,34 +651,42 @@ def calculate_results():
     game_state.bot.save_model()
     
     # Update message
-    game_state.message = f"Results - Player: {player_result} (${player_winnings}), Bot: {bot_result} (${bot_winnings})"
+    player_summary = " | ".join(player_results)
+    bot_net = bot_winnings - game_state.bot_hand.bet
+    game_state.message = f"RESULTS - Player: {player_summary} | Bot: {bot_result} (${bot_net:+})"
     game_state.game_phase = "results"
+    game_state.bot_last_action = ""
 
 def get_hand_result(hand: Hand, dealer_value: int) -> str:
     """Determine if hand wins, loses, or pushes"""
+    if hand.is_surrendered:
+        return "surrendered"
+    
     hand_value = hand.get_value()
     dealer_busted = dealer_value > 21
     
     if hand.is_busted:
-        return "lose"
+        return "lost"
     elif dealer_busted:
-        return "win"
+        return "won"
     elif hand_value > dealer_value:
-        return "win"
+        return "won"
     elif hand_value < dealer_value:
-        return "lose"
+        return "lost"
     else:
-        return "push"
+        return "pushed"
 
 def calculate_winnings(hand: Hand, result: str) -> int:
     """Calculate winnings based on result"""
-    if result == "win":
+    if result == "won":
         if hand.is_blackjack:
             return int(hand.bet * 2.5)  # Blackjack pays 3:2
         else:
             return hand.bet * 2  # Normal win pays 1:1
-    elif result == "push":
+    elif result == "pushed":
         return hand.bet  # Return original bet
+    elif result == "surrendered":
+        return hand.bet // 2  # Return half bet
     else:
         return 0  # Lose bet
 
@@ -517,13 +704,20 @@ def update_display():
         hide_first=(game_state.game_phase == "playing")
     )
     
-    # Player display
-    player_display = game_state.player.hands[0].get_display()
+    # Player display (handle multiple hands)
+    if len(game_state.player.hands) == 1:
+        player_display = game_state.player.hands[0].get_display()
+    else:
+        hand_displays = []
+        for i, hand in enumerate(game_state.player.hands):
+            marker = "👉 " if i == game_state.player.current_hand_index and game_state.game_phase == "playing" else ""
+            hand_displays.append(f"{marker}Hand {i+1}: {hand.get_display()}")
+        player_display = "\n".join(hand_displays)
     
-    # Bot display
-    bot_display = ""
-    if hasattr(game_state, 'bot_hand'):
-        bot_display = game_state.bot_hand.get_display()
+    # Bot display with action indicator
+    bot_action_text = f" (Last: {game_state.bot_last_action})" if game_state.bot_last_action else ""
+    thinking_text = " (Thinking...)" if game_state.bot_is_thinking else ""
+    bot_display = game_state.bot_hand.get_display() + bot_action_text + thinking_text
     
     # Banks
     player_bank = f"Player Bank: ${game_state.player.bank}"
@@ -537,6 +731,12 @@ def update_display():
     show_play_controls = game_state.game_phase == "playing"
     show_new_game = game_state.game_phase in ["results", "betting"]
     
+    # Advanced play controls (only show when relevant)
+    current_hand = game_state.player.get_current_hand() if game_state.game_phase == "playing" else None
+    show_double = current_hand and current_hand.can_double() and current_hand.bet <= game_state.player.bank
+    show_split = current_hand and current_hand.can_split() and current_hand.bet <= game_state.player.bank  
+    show_surrender = current_hand and current_hand.can_surrender()
+    
     return (
         dealer_display,
         player_display, 
@@ -545,9 +745,12 @@ def update_display():
         bot_bank,
         bot_stats,
         game_state.message,
-        gr.update(visible=show_bet_controls),  # bet_row
-        gr.update(visible=show_play_controls), # play_row
-        gr.update(visible=show_new_game)       # new_game_btn
+        gr.update(visible=show_bet_controls),     # bet_row
+        gr.update(visible=show_play_controls),    # play_row
+        gr.update(visible=show_new_game),         # new_game_btn
+        gr.update(visible=show_double),           # double_btn
+        gr.update(visible=show_split),            # split_btn  
+        gr.update(visible=show_surrender)         # surrender_btn
     )
 
 # Gradio Interface
@@ -555,6 +758,7 @@ with gr.Blocks(title="BlackJack AI Trainer", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# 🃏 BlackJack AI Trainer")
     gr.Markdown("Train an AI bot by playing BlackJack! The bot learns from each game and **saves its progress to Hugging Face Hub** so learning persists across restarts.")
     gr.Markdown("💡 *The bot uses Q-learning to improve its strategy. 🌐 = loaded from Hub, 💾 = local file*")
+    gr.Markdown("🆕 **Features**: Split pairs, double down, surrender, and watch the bot make real-time decisions!")
     
     with gr.Row():
         with gr.Column():
@@ -563,29 +767,35 @@ with gr.Blocks(title="BlackJack AI Trainer", theme=gr.themes.Soft()) as demo:
         
         with gr.Column():
             gr.Markdown("### 👤 Player")
-            player_cards = gr.Textbox(label="Your Hand", value="", interactive=False)
+            player_cards = gr.Textbox(label="Your Hand(s)", value="", interactive=False, lines=3)
             player_bank_display = gr.Textbox(label="Your Bank", value="Player Bank: $1000", interactive=False)
         
         with gr.Column():
             gr.Markdown("### 🤖 AI Bot")
-            bot_cards = gr.Textbox(label="Bot's Hand", value="", interactive=False)
+            bot_cards = gr.Textbox(label="Bot's Hand", value="", interactive=False, lines=2)
             bot_bank_display = gr.Textbox(label="Bot's Bank", value="Bot Bank: $1000", interactive=False)
     
     # Bot statistics
     bot_stats_display = gr.Textbox(label="Bot Performance", value="Bot Stats: No games played yet", interactive=False)
     
     # Game message
-    message_display = gr.Textbox(label="Game Status", value="Click 'New Game' to start!", interactive=False)
+    message_display = gr.Textbox(label="Game Status", value="Click 'New Game' to start!", interactive=False, lines=2)
     
     # Betting controls
     with gr.Row(visible=False) as bet_row:
-        bet_amount = gr.Number(label="Bet Amount", value=10, minimum=1, maximum=100)
+        bet_amount = gr.Number(label="Bet Amount ($)", value=10, minimum=1, maximum=100)
         place_bet_btn = gr.Button("Place Bet", variant="primary")
     
-    # Playing controls  
+    # Basic playing controls  
     with gr.Row(visible=False) as play_row:
         hit_btn = gr.Button("Hit", variant="primary")
         stand_btn = gr.Button("Stand", variant="secondary")
+    
+    # Advanced playing controls
+    with gr.Row():
+        double_btn = gr.Button("Double Down", variant="secondary", visible=False)
+        split_btn = gr.Button("Split Pair", variant="secondary", visible=False)  
+        surrender_btn = gr.Button("Surrender", variant="secondary", visible=False)
     
     # Game management controls
     with gr.Row():
@@ -597,7 +807,7 @@ with gr.Blocks(title="BlackJack AI Trainer", theme=gr.themes.Soft()) as demo:
         start_new_game,
         outputs=[dealer_cards, player_cards, bot_cards, player_bank_display, 
                 bot_bank_display, bot_stats_display, message_display, 
-                bet_row, play_row, new_game_btn]
+                bet_row, play_row, new_game_btn, double_btn, split_btn, surrender_btn]
     )
     
     place_bet_btn.click(
@@ -605,28 +815,49 @@ with gr.Blocks(title="BlackJack AI Trainer", theme=gr.themes.Soft()) as demo:
         inputs=[bet_amount],
         outputs=[dealer_cards, player_cards, bot_cards, player_bank_display, 
                 bot_bank_display, bot_stats_display, message_display, 
-                bet_row, play_row, new_game_btn]
+                bet_row, play_row, new_game_btn, double_btn, split_btn, surrender_btn]
     )
     
     hit_btn.click(
         player_hit,
         outputs=[dealer_cards, player_cards, bot_cards, player_bank_display, 
                 bot_bank_display, bot_stats_display, message_display, 
-                bet_row, play_row, new_game_btn]
+                bet_row, play_row, new_game_btn, double_btn, split_btn, surrender_btn]
     )
     
     stand_btn.click(
         player_stand,
         outputs=[dealer_cards, player_cards, bot_cards, player_bank_display, 
                 bot_bank_display, bot_stats_display, message_display, 
-                bet_row, play_row, new_game_btn]
+                bet_row, play_row, new_game_btn, double_btn, split_btn, surrender_btn]
+    )
+    
+    double_btn.click(
+        player_double,
+        outputs=[dealer_cards, player_cards, bot_cards, player_bank_display, 
+                bot_bank_display, bot_stats_display, message_display, 
+                bet_row, play_row, new_game_btn, double_btn, split_btn, surrender_btn]
+    )
+    
+    split_btn.click(
+        player_split,
+        outputs=[dealer_cards, player_cards, bot_cards, player_bank_display, 
+                bot_bank_display, bot_stats_display, message_display, 
+                bet_row, play_row, new_game_btn, double_btn, split_btn, surrender_btn]
+    )
+    
+    surrender_btn.click(
+        player_surrender,
+        outputs=[dealer_cards, player_cards, bot_cards, player_bank_display, 
+                bot_bank_display, bot_stats_display, message_display, 
+                bet_row, play_row, new_game_btn, double_btn, split_btn, surrender_btn]
     )
     
     reset_banks_btn.click(
         reset_banks,
         outputs=[dealer_cards, player_cards, bot_cards, player_bank_display, 
                 bot_bank_display, bot_stats_display, message_display, 
-                bet_row, play_row, new_game_btn]
+                bet_row, play_row, new_game_btn, double_btn, split_btn, surrender_btn]
     )
     
     # Initialize display
@@ -634,7 +865,7 @@ with gr.Blocks(title="BlackJack AI Trainer", theme=gr.themes.Soft()) as demo:
         start_new_game,
         outputs=[dealer_cards, player_cards, bot_cards, player_bank_display, 
                 bot_bank_display, bot_stats_display, message_display, 
-                bet_row, play_row, new_game_btn]
+                bet_row, play_row, new_game_btn, double_btn, split_btn, surrender_btn]
     )
 
 if __name__ == "__main__":
