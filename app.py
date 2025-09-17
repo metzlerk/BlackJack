@@ -375,10 +375,6 @@ class GameState:
 game_state = GameState()
 
 # Game Logic Functions
-import time
-import asyncio
-from threading import Timer
-
 def start_new_game():
     """Start a new round of blackjack"""
     game_state.dealer.new_hand()
@@ -412,8 +408,6 @@ def place_bet(bet_amount: int):
     game_state.bot.bank -= bet_amount
     
     # Deal initial cards (2 to each player, 2 to dealer)
-    game_state.message = "Dealing cards..."
-    
     # First card to each player
     game_state.player.get_current_hand().add_card(game_state.deck.deal_card())
     game_state.bot_hand.add_card(game_state.deck.deal_card())
@@ -431,7 +425,7 @@ def place_bet(bet_amount: int):
 
 def player_hit():
     """Player chooses to hit"""
-    if game_state.game_phase != "playing":
+    if game_state.game_phase != "playing" or game_state.bot_is_thinking:
         return update_display()
     
     current_hand = game_state.player.get_current_hand()
@@ -447,7 +441,7 @@ def player_hit():
 
 def player_stand():
     """Player chooses to stand"""
-    if game_state.game_phase != "playing":
+    if game_state.game_phase != "playing" or game_state.bot_is_thinking:
         return update_display()
     
     game_state.message = f"Hand {game_state.player.current_hand_index + 1} stands!"
@@ -455,7 +449,7 @@ def player_stand():
 
 def player_double():
     """Player chooses to double down"""
-    if game_state.game_phase != "playing":
+    if game_state.game_phase != "playing" or game_state.bot_is_thinking:
         return update_display()
     
     current_hand = game_state.player.get_current_hand()
@@ -485,7 +479,7 @@ def player_double():
 
 def player_split():
     """Player chooses to split"""
-    if game_state.game_phase != "playing":
+    if game_state.game_phase != "playing" or game_state.bot_is_thinking:
         return update_display()
     
     current_hand = game_state.player.get_current_hand()
@@ -522,7 +516,7 @@ def player_split():
 
 def player_surrender():
     """Player chooses to surrender"""
-    if game_state.game_phase != "playing":
+    if game_state.game_phase != "playing" or game_state.bot_is_thinking:
         return update_display()
     
     current_hand = game_state.player.get_current_hand()
@@ -544,19 +538,17 @@ def handle_next_player_hand():
         game_state.message = f"Playing hand {game_state.player.current_hand_index + 1} of {len(game_state.player.hands)}."
         return update_display()
     else:
-        # Player finished, now bot plays
-        game_state.message = "Your turn finished! Bot is thinking..."
-        game_state.bot_is_thinking = True
-        # Use a timer to simulate thinking time
-        Timer(1.0, bot_play).start()
+        # Player finished, now complete the rest of the game
+        complete_game_round()
         return update_display()
 
-def bot_play():
-    """Bot plays its hand with visible moves"""
-    game_state.bot_is_thinking = False
+def complete_game_round():
+    """Complete bot play, dealer play, and results calculation"""
+    # Bot plays
     states_actions = []
+    game_state.bot_last_action = "THINKING..."
     
-    # Bot plays using its strategy
+    # Bot makes decisions
     while (not game_state.bot_hand.is_busted and 
            not game_state.bot_hand.is_blackjack and 
            not game_state.bot_hand.is_surrendered):
@@ -569,56 +561,29 @@ def bot_play():
         
         if action == "hit":
             game_state.bot_hand.add_card(game_state.deck.deal_card())
-            game_state.message = f"Bot chose to HIT and drew {game_state.bot_hand.cards[-1]}"
         elif action == "stand":
-            game_state.message = "Bot chose to STAND"
             break
         elif action == "double" and game_state.bot_hand.can_double() and game_state.bot.bank >= game_state.bot_hand.bet:
             game_state.bot.bank -= game_state.bot_hand.bet
             game_state.bot_hand.bet *= 2
             game_state.bot_hand.is_doubled = True
             game_state.bot_hand.add_card(game_state.deck.deal_card())
-            game_state.message = f"Bot chose to DOUBLE DOWN and drew {game_state.bot_hand.cards[-1]}"
             break
         elif action == "surrender" and game_state.bot_hand.can_surrender():
             game_state.bot_hand.is_surrendered = True
             game_state.bot.bank += game_state.bot_hand.bet // 2
-            game_state.message = "Bot chose to SURRENDER"
             break
         else:
-            # Fallback to stand if action not available
-            game_state.message = "Bot chose to STAND"
             break
-        
-        # Add delay between bot actions
-        time.sleep(1)
     
     game_state.bot_states_actions = states_actions
     
-    # Add delay before dealer plays
-    Timer(2.0, dealer_play).start()
-
-def dealer_play():
-    """Dealer plays their hand"""
-    game_state.message = "Dealer reveals cards and plays..."
-    
-    # Dealer plays according to rules
+    # Dealer plays
     while game_state.dealer.should_hit():
         card = game_state.deck.deal_card()
         game_state.dealer.hand.add_card(card)
-        game_state.message = f"Dealer draws {card} (Total: {game_state.dealer.hand.get_value()})"
-        time.sleep(1)
     
-    if game_state.dealer.hand.is_busted:
-        game_state.message = "Dealer busted!"
-    else:
-        game_state.message = f"Dealer stands with {game_state.dealer.hand.get_value()}"
-    
-    # Calculate results after a short delay
-    Timer(1.0, calculate_results).start()
-
-def calculate_results():
-    """Calculate and display game results"""
+    # Calculate results
     dealer_value = game_state.dealer.hand.get_value()
     total_player_winnings = 0
     
@@ -637,10 +602,10 @@ def calculate_results():
     game_state.bot.bank += bot_winnings
     
     # Update bot learning
-    if bot_result == "win":
+    if bot_result == "won":
         reward = 1.0
         game_state.bot.wins += 1
-    elif bot_result == "lose":
+    elif bot_result == "lost":
         reward = -1.0
         game_state.bot.losses += 1
     else:  # push
@@ -653,7 +618,7 @@ def calculate_results():
     # Update message
     player_summary = " | ".join(player_results)
     bot_net = bot_winnings - game_state.bot_hand.bet
-    game_state.message = f"RESULTS - Player: {player_summary} | Bot: {bot_result} (${bot_net:+})"
+    game_state.message = f"RESULTS - Player: {player_summary} | Bot: {bot_result} (${bot_net:+}) | Dealer: {dealer_value}"
     game_state.game_phase = "results"
     game_state.bot_last_action = ""
 
@@ -728,14 +693,23 @@ def update_display():
     
     # Game controls visibility
     show_bet_controls = game_state.game_phase == "betting"
-    show_play_controls = game_state.game_phase == "playing"
+    show_play_controls = game_state.game_phase == "playing" and not game_state.bot_is_thinking
     show_new_game = game_state.game_phase in ["results", "betting"]
     
-    # Advanced play controls (only show when relevant)
-    current_hand = game_state.player.get_current_hand() if game_state.game_phase == "playing" else None
-    show_double = current_hand and current_hand.can_double() and current_hand.bet <= game_state.player.bank
-    show_split = current_hand and current_hand.can_split() and current_hand.bet <= game_state.player.bank  
-    show_surrender = current_hand and current_hand.can_surrender()
+    # Advanced play controls (only show when relevant and it's player's turn)
+    current_hand = None
+    show_double = False
+    show_split = False
+    show_surrender = False
+    
+    if game_state.game_phase == "playing" and not game_state.bot_is_thinking:
+        current_hand = game_state.player.get_current_hand()
+        # Only show advanced options if current hand allows them and we have enough money
+        show_double = (current_hand.can_double() and 
+                      current_hand.bet <= game_state.player.bank)
+        show_split = (current_hand.can_split() and 
+                     current_hand.bet <= game_state.player.bank)  
+        show_surrender = current_hand.can_surrender()
     
     return (
         dealer_display,
