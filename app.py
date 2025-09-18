@@ -723,14 +723,6 @@ class PlayerStats:
             
         except Exception as e:
             print(f"Error loading model, starting fresh: {e}")
-    
-    def get_stats(self) -> str:
-        if self.games_played == 0:
-            return "Bot Stats: No games played yet"
-        
-        win_rate = (self.wins / self.games_played) * 100
-        model_source = "🌐 Hub" if hasattr(self, '_loaded_from_hub') else "💾 Local"
-        return f"Bot Stats: {self.games_played} games, {win_rate:.1f}% win rate, Bank: ${self.bank} ({model_source})"
 
 # Game State Management
 class GameState:
@@ -1211,7 +1203,7 @@ with gr.Blocks(title="BlackJack AI Trainer", theme=gr.themes.Soft()) as demo:
             dealer_cards = gr.Textbox(label="Dealer's Hand", value="", interactive=False)
         
         with gr.Column():
-            gr.Markdown("### � Player")
+            gr.Markdown("### 👤 Player")
             player_cards = gr.Textbox(label="Your Hand(s)", value="", interactive=False, lines=2)
         
         with gr.Column():
