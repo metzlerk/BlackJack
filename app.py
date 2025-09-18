@@ -240,6 +240,13 @@ class BasicStrategyBot:
         self.wins = 0
         self.losses = 0
         
+        # Surrender strategy (first priority when available)
+        self.surrender_strategy = {
+            # Player total: {dealer_upcard: should_surrender}
+            16: {9: True, 10: True, 11: True},  # Surrender 16 vs 9, 10, A
+            15: {10: True, 11: True},           # Surrender 15 vs 10, A
+        }
+        
         # Basic Strategy Charts
         # Hard hands (no ace or ace counted as 1)
         self.hard_strategy = {
@@ -297,7 +304,14 @@ class BasicStrategyBot:
         if dealer_upcard.rank == 'A':
             dealer_value = 11
         
-        # Check for pair splitting first
+        # Check for surrender first (only on initial two-card hands)
+        if hand.can_surrender():
+            hand_value = hand.get_value()
+            if hand_value in self.surrender_strategy:
+                if self.surrender_strategy[hand_value].get(dealer_value, False):
+                    return 'surrender'
+        
+        # Check for pair splitting 
         if hand.can_split():
             pair_value = hand.cards[0].value if hand.cards[0].value <= 10 else 10
             if hand.cards[0].rank == 'A':
