@@ -538,31 +538,53 @@ class PlayerStats:
         self.doubles = 0
         self.splits = 0
     
+    def _ensure_attributes(self):
+        """Ensure all attributes exist for backward compatibility"""
+        if not hasattr(self, 'pushes'):
+            self.pushes = 0
+        if not hasattr(self, 'blackjacks'):
+            self.blackjacks = 0
+        if not hasattr(self, 'surrenders'):
+            self.surrenders = 0
+        if not hasattr(self, 'doubles'):
+            self.doubles = 0
+        if not hasattr(self, 'splits'):
+            self.splits = 0
+    
     def record_win(self):
+        self._ensure_attributes()
         self.wins += 1
         self.games_played += 1
     
     def record_loss(self):
+        self._ensure_attributes()
         self.losses += 1
         self.games_played += 1
     
     def record_push(self):
+        self._ensure_attributes()
         self.pushes += 1
         self.games_played += 1
     
     def record_blackjack(self):
+        self._ensure_attributes()
         self.blackjacks += 1
     
     def record_surrender(self):
+        self._ensure_attributes()
         self.surrenders += 1
     
     def record_double(self):
+        self._ensure_attributes()
         self.doubles += 1
     
     def record_split(self):
+        self._ensure_attributes()
         self.splits += 1
     
     def get_stats(self) -> str:
+        self._ensure_attributes()  # Ensure backward compatibility
+        
         if self.games_played == 0:
             return "Player: No games played yet"
         
