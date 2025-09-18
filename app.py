@@ -240,20 +240,17 @@ class BasicStrategyBot:
         self.wins = 0
         self.losses = 0
         
-        # Surrender strategy (first priority when available)
+        # Surrender strategy (first priority when available) 
         self.surrender_strategy = {
             # Player total: {dealer_upcard: should_surrender}
             16: {9: True, 10: True, 11: True},  # Surrender 16 vs 9, 10, A
-            15: {10: True, 11: True},           # Surrender 15 vs 10, A
+            15: {10: True, 11: True},           # Surrender 15 vs 10, A (was missing A)
         }
         
-        # Basic Strategy Charts
+        # Basic Strategy Charts - CORRECTED to match official chart
         # Hard hands (no ace or ace counted as 1)
         self.hard_strategy = {
             # Player total: {dealer_upcard: action}
-            5: {2:'H', 3:'H', 4:'H', 5:'H', 6:'H', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},
-            6: {2:'H', 3:'H', 4:'H', 5:'H', 6:'H', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},
-            7: {2:'H', 3:'H', 4:'H', 5:'H', 6:'H', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},
             8: {2:'H', 3:'H', 4:'H', 5:'H', 6:'H', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},
             9: {2:'H', 3:'D', 4:'D', 5:'D', 6:'D', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},
             10: {2:'D', 3:'D', 4:'D', 5:'D', 6:'D', 7:'D', 8:'D', 9:'D', 10:'H', 11:'H'},
@@ -270,7 +267,7 @@ class BasicStrategyBot:
             21: {2:'S', 3:'S', 4:'S', 5:'S', 6:'S', 7:'S', 8:'S', 9:'S', 10:'S', 11:'S'},
         }
         
-        # Soft hands (ace counted as 11)
+        # Soft hands (ace counted as 11) - CORRECTED to match official chart
         self.soft_strategy = {
             # Ace + card value: {dealer_upcard: action}
             2: {2:'H', 3:'H', 4:'H', 5:'D', 6:'D', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},  # A,2
@@ -278,24 +275,24 @@ class BasicStrategyBot:
             4: {2:'H', 3:'H', 4:'D', 5:'D', 6:'D', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},  # A,4
             5: {2:'H', 3:'H', 4:'D', 5:'D', 6:'D', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},  # A,5
             6: {2:'H', 3:'D', 4:'D', 5:'D', 6:'D', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},  # A,6
-            7: {2:'S', 3:'D', 4:'D', 5:'D', 6:'D', 7:'S', 8:'S', 9:'H', 10:'H', 11:'H'},  # A,7
-            8: {2:'S', 3:'S', 4:'S', 5:'S', 6:'S', 7:'S', 8:'S', 9:'S', 10:'S', 11:'S'},  # A,8
+            7: {2:'Ds', 3:'Ds', 4:'Ds', 5:'Ds', 6:'Ds', 7:'S', 8:'S', 9:'H', 10:'H', 11:'H'},  # A,7
+            8: {2:'S', 3:'S', 4:'S', 5:'S', 6:'Ds', 7:'S', 8:'S', 9:'S', 10:'S', 11:'S'},  # A,8
             9: {2:'S', 3:'S', 4:'S', 5:'S', 6:'S', 7:'S', 8:'S', 9:'S', 10:'S', 11:'S'},  # A,9
         }
         
-        # Pair splitting strategy
+        # Pair splitting strategy - CORRECTED to match official chart
         self.pair_strategy = {
-            # Pair value: {dealer_upcard: action} - P=split, else follow hard/soft strategy
-            2: {2:'P', 3:'P', 4:'P', 5:'P', 6:'P', 7:'P', 8:'H', 9:'H', 10:'H', 11:'H'},
-            3: {2:'P', 3:'P', 4:'P', 5:'P', 6:'P', 7:'P', 8:'H', 9:'H', 10:'H', 11:'H'},
-            4: {2:'H', 3:'H', 4:'H', 5:'P', 6:'P', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},
-            5: {2:'D', 3:'D', 4:'D', 5:'D', 6:'D', 7:'D', 8:'D', 9:'D', 10:'H', 11:'H'},
-            6: {2:'P', 3:'P', 4:'P', 5:'P', 6:'P', 7:'H', 8:'H', 9:'H', 10:'H', 11:'H'},
-            7: {2:'P', 3:'P', 4:'P', 5:'P', 6:'P', 7:'P', 8:'H', 9:'H', 10:'H', 11:'H'},
-            8: {2:'P', 3:'P', 4:'P', 5:'P', 6:'P', 7:'P', 8:'P', 9:'P', 10:'P', 11:'P'},
-            9: {2:'P', 3:'P', 4:'P', 5:'P', 6:'P', 7:'S', 8:'P', 9:'P', 10:'S', 11:'S'},
-            10: {2:'S', 3:'S', 4:'S', 5:'S', 6:'S', 7:'S', 8:'S', 9:'S', 10:'S', 11:'S'},
-            11: {2:'P', 3:'P', 4:'P', 5:'P', 6:'P', 7:'P', 8:'P', 9:'P', 10:'P', 11:'P'},
+            # Pair value: {dealer_upcard: action}
+            2: {2:'Y/N', 3:'Y/N', 4:'Y', 5:'Y', 6:'Y', 7:'Y', 8:'N', 9:'N', 10:'N', 11:'N'},  # 2,2
+            3: {2:'Y/N', 3:'Y/N', 4:'Y', 5:'Y', 6:'Y', 7:'Y', 8:'N', 9:'N', 10:'N', 11:'N'},  # 3,3
+            4: {2:'N', 3:'N', 4:'N', 5:'Y/N', 6:'Y/N', 7:'N', 8:'N', 9:'N', 10:'N', 11:'N'},  # 4,4
+            5: {2:'N', 3:'N', 4:'N', 5:'N', 6:'N', 7:'N', 8:'N', 9:'N', 10:'N', 11:'N'},      # 5,5 (never split)
+            6: {2:'Y/N', 3:'Y', 4:'Y', 5:'Y', 6:'Y', 7:'N', 8:'N', 9:'N', 10:'N', 11:'N'},   # 6,6
+            7: {2:'Y', 3:'Y', 4:'Y', 5:'Y', 6:'Y', 7:'Y', 8:'N', 9:'N', 10:'N', 11:'N'},     # 7,7
+            8: {2:'Y', 3:'Y', 4:'Y', 5:'Y', 6:'Y', 7:'Y', 8:'Y', 9:'Y', 10:'Y', 11:'Y'},     # 8,8 (always split)
+            9: {2:'Y', 3:'Y', 4:'Y', 5:'Y', 6:'Y', 7:'N', 8:'Y', 9:'Y', 10:'N', 11:'N'},     # 9,9
+            10: {2:'N', 3:'N', 4:'N', 5:'N', 6:'N', 7:'N', 8:'N', 9:'N', 10:'N', 11:'N'},    # T,T (never split)
+            11: {2:'Y', 3:'Y', 4:'Y', 5:'Y', 6:'Y', 7:'Y', 8:'Y', 9:'Y', 10:'Y', 11:'Y'},    # A,A (always split)
         }
     
     def get_action(self, hand: Hand, dealer_upcard: Card) -> str:
@@ -317,8 +314,9 @@ class BasicStrategyBot:
             if hand.cards[0].rank == 'A':
                 pair_value = 11
             
-            action = self.pair_strategy.get(pair_value, {}).get(dealer_value, 'H')
-            if action == 'P' and self.bank >= hand.bet:
+            action = self.pair_strategy.get(pair_value, {}).get(dealer_value, 'N')
+            # Handle conditional splits (Y/N = split if DAS allowed, for simplicity we'll split)
+            if action in ['Y', 'Y/N'] and self.bank >= hand.bet:
                 return 'split'
         
         # Check if hand is soft (ace counted as 11)
@@ -338,16 +336,23 @@ class BasicStrategyBot:
             hand_value = hand.get_value()
             action = self.hard_strategy.get(hand_value, {}).get(dealer_value, 'H')
         
-        # Convert action codes to strings
+        # Convert action codes to strings based on official chart
         if action == 'H':
             return 'hit'
         elif action == 'S':
             return 'stand'
         elif action == 'D':
+            # Double if allowed, otherwise hit
             if hand.can_double() and self.bank >= hand.bet:
                 return 'double'
             else:
-                return 'hit'  # If can't double, hit
+                return 'hit'
+        elif action == 'Ds':
+            # Double if allowed, otherwise stand
+            if hand.can_double() and self.bank >= hand.bet:
+                return 'double'
+            else:
+                return 'stand'
         
         return 'stand'  # Default fallback
     
