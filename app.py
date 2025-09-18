@@ -356,7 +356,8 @@ class BasicStrategyBot:
             return "Strategy Bot: No games played yet"
         
         win_rate = (self.wins / self.games_played) * 100
-        return f"Strategy Bot: {self.games_played} games, {win_rate:.1f}% win rate, Bank: ${self.bank}"
+        pushes = self.games_played - self.wins - self.losses
+        return f"Strategy Bot: {self.games_played} games, {self.wins}W-{self.losses}L-{pushes}P, {win_rate:.1f}% win rate, Bank: ${self.bank}"
 
 # AI Bot with Learning
 class BlackjackBot:
@@ -521,8 +522,9 @@ class BlackjackBot:
             return "Learning Bot: No games played yet"
         
         win_rate = (self.wins / self.games_played) * 100
+        pushes = self.games_played - self.wins - self.losses
         model_source = "🌐 Hub" if hasattr(self, '_loaded_from_hub') else "💾 Local"
-        return f"Learning Bot: {self.games_played} games, {win_rate:.1f}% win rate, Bank: ${self.bank} ({model_source})"
+        return f"Learning Bot: {self.games_played} games, {self.wins}W-{self.losses}L-{pushes}P, {win_rate:.1f}% win rate, Bank: ${self.bank} ({model_source})"
 
 # Player Statistics Tracking
 class PlayerStats:
@@ -530,13 +532,42 @@ class PlayerStats:
         self.games_played = 0
         self.wins = 0
         self.losses = 0
+        self.pushes = 0
+        self.blackjacks = 0
+        self.surrenders = 0
+        self.doubles = 0
+        self.splits = 0
+    
+    def record_win(self):
+        self.wins += 1
+        self.games_played += 1
+    
+    def record_loss(self):
+        self.losses += 1
+        self.games_played += 1
+    
+    def record_push(self):
+        self.pushes += 1
+        self.games_played += 1
+    
+    def record_blackjack(self):
+        self.blackjacks += 1
+    
+    def record_surrender(self):
+        self.surrenders += 1
+    
+    def record_double(self):
+        self.doubles += 1
+    
+    def record_split(self):
+        self.splits += 1
     
     def get_stats(self) -> str:
         if self.games_played == 0:
             return "Player: No games played yet"
         
         win_rate = (self.wins / self.games_played) * 100
-        return f"Player: {self.games_played} games, {win_rate:.1f}% win rate"
+        return f"Player: {self.games_played} games, {self.wins}W-{self.losses}L-{self.pushes}P, {win_rate:.1f}% win rate, {self.blackjacks} BJ"
     def __init__(self):
         self.bank = 1000
         self.q_table = defaultdict(lambda: defaultdict(float))
@@ -1173,29 +1204,37 @@ with gr.Blocks(title="BlackJack AI Trainer", theme=gr.themes.Soft()) as demo:
     gr.Markdown("💡 *Features card counting with Hi-Lo system. The Learning Bot saves progress to Hugging Face Hub.*")
     gr.Markdown("🆕 **Actions**: Split pairs, double down, surrender. **Tracking**: Player stats, bot performance, and card count!")
     
+    # 2x4 Grid Layout
     with gr.Row():
         with gr.Column():
             gr.Markdown("### 🎯 Dealer")
             dealer_cards = gr.Textbox(label="Dealer's Hand", value="", interactive=False)
-            
-            # Card Count Display
-            gr.Markdown("### 📊 Card Count")
-            count_display = gr.Textbox(label="Hi-Lo Count", value="Count: +0 | True: +0.0", interactive=False)
         
         with gr.Column():
-            gr.Markdown("### 👤 Player")
-            player_cards = gr.Textbox(label="Your Hand(s)", value="", interactive=False, lines=3)
-            player_bank_display = gr.Textbox(label="Your Bank", value="Player Bank: $1000", interactive=False)
+            gr.Markdown("### � Player")
+            player_cards = gr.Textbox(label="Your Hand(s)", value="", interactive=False, lines=2)
         
         with gr.Column():
             gr.Markdown("### 🤖 Learning Bot")
             bot_cards = gr.Textbox(label="Learning Bot's Hand", value="", interactive=False, lines=2)
-            bot_bank_display = gr.Textbox(label="Learning Bot's Bank", value="Learning Bot Bank: $1000", interactive=False)
-    
-    with gr.Row():
+        
         with gr.Column():
             gr.Markdown("### 🎯 Strategy Bot")
             strategy_bot_cards = gr.Textbox(label="Strategy Bot's Hand", value="", interactive=False, lines=2)
+    
+    # Second row - Banks and Card Count
+    with gr.Row():
+        with gr.Column():
+            gr.Markdown("### 📊 Card Count")
+            count_display = gr.Textbox(label="Hi-Lo Count", value="Count: +0 | True: +0.0", interactive=False)
+        
+        with gr.Column():
+            player_bank_display = gr.Textbox(label="Your Bank", value="Player Bank: $1000", interactive=False)
+        
+        with gr.Column():
+            bot_bank_display = gr.Textbox(label="Learning Bot's Bank", value="Learning Bot Bank: $1000", interactive=False)
+        
+        with gr.Column():
             strategy_bot_bank_display = gr.Textbox(label="Strategy Bot's Bank", value="Strategy Bot Bank: $1000", interactive=False)
     
     # Performance statistics for all players
